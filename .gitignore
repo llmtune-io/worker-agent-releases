@@ -1,0 +1,5 @@
+# This repository holds ONLY release tooling, workflow, and docs for the
+# LLMTune worker agent. No agent source, no infra/platform source, ever.
+*.exe
+*.ps1
+!README.md
