@@ -42,7 +42,7 @@ jobs:
         run: |
           Set-Location infra
           powershell -NoProfile -ExecutionPolicy Bypass -File workers/win-agent/Build-LLMTuneWorkerAgent.ps1 -Version ${{ steps.ver.outputs.version }}
-          $exe = "workers-win-agent-dist/llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe"
+          $exe = "workers/workers-win-agent-dist/llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe"
           if (-not (Test-Path $exe)) { throw "expected exe missing: $exe" }
           Copy-Item $exe ../
 
