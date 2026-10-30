@@ -102,8 +102,9 @@ jobs:
       - name: Syntax-check agent on Linux (pwsh parser)
         run: |
           pwsh -NoProfile -Command '
+            $p = Join-Path $env:GITHUB_WORKSPACE "infra/workers/win-agent/llmtune-worker-agent.ps1"
             $errs = $null
-            [System.Management.Automation.Language.Parser]::ParseFile("$GITHUB_WORKSPACE/infra/workers/win-agent/llmtune-worker-agent.ps1", [ref]$null, [ref]$errs) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$null, [ref]$errs) | Out-Null
             if ($errs -and $errs.Count -gt 0) { $errs | ForEach-Object { Write-Error $_.Message }; exit 1 }
             "agent script parses cleanly on pwsh"'
       - name: Build Linux tarball
