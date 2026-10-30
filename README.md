@@ -54,7 +54,7 @@ onboarding page when you add a worker — copy it from there. Manual form:
      -Token <your-worker-token> `
      -SetupKey <your-join-key> `
      -KeyId <join-key-id> `
-     -NetbirdIp <assigned-network-ip> `
+     -NetworkIp <assigned-network-ip> `
      -Name my-gpu-box
    ```
    Linux:
@@ -65,7 +65,7 @@ onboarding page when you add a worker — copy it from there. Manual form:
      -Token <your-worker-token> \
      -SetupKey <your-join-key> \
      -KeyId <join-key-id> \
-     -NetbirdIp <assigned-network-ip> \
+     -NetworkIp <assigned-network-ip> \
      -Name my-gpu-box
    ```
    All values can also be supplied via environment variables
