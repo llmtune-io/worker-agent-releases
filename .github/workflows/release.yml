@@ -1,12 +1,12 @@
 name: Release Worker Agent
 
-# Builds the LLMTune Windows worker agent (source in the PRIVATE infra repo —
-# checked out with a deploy key, never committed here) into a self-contained
-# .exe, packages SHA-256 checksums, and attaches both to a GitHub Release.
-# The agent is infrastructure-only: it joins NetBird, probes hardware, derives
-# the chassis signature, registers, and heartbeats. It carries NO model names,
-# paths, or configuration — model assignment is platform-managed via the admin
-# panel / model-assignment API and delivered through heartbeat responses.
+# Builds the LLMTune worker agent for Windows AND Linux from the PRIVATE infra
+# repo (checked out with a token, never committed here) and attaches both
+# artifacts + checksums to a GitHub Release.
+# The agent is infrastructure-only: NetBird join, hardware probe, chassis
+# signature, registration, heartbeat. It carries NO model names, paths, or
+# configuration — model assignment is platform-managed via the admin panel /
+# model-assignment API and delivered through heartbeat responses.
 
 on:
   push:
@@ -20,7 +20,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - name: Checkout agent source (private infra repo, deploy key)
+      - name: Checkout agent source (private infra repo, deploy token)
         uses: actions/checkout@v4
         with:
           repository: llmtune-io/llmtune-infra
@@ -44,12 +44,13 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File workers/win-agent/Build-LLMTuneWorkerAgent.ps1 -Version ${{ steps.ver.outputs.version }}
           $exe = "workers/workers-win-agent-dist/llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe"
           if (-not (Test-Path $exe)) { throw "expected exe missing: $exe" }
-          Copy-Item $exe ../
+          New-Item -ItemType Directory -Force -Path ../artifacts | Out-Null
+          Copy-Item $exe ../artifacts/
 
-      - name: Guard — no model identifiers in artifacts
+      - name: Guard — no model identifiers in binary
         shell: pwsh
         run: |
-          $exe = "llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe"
+          $exe = "artifacts/llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe"
           $bytes = [IO.File]::ReadAllBytes($exe)
           $text = [Text.Encoding]::UTF8.GetString($bytes)
           $banned = @("devstral", "mistral", "llama", "qwen", "vllm serve", "model-weights")
@@ -57,29 +58,116 @@ jobs:
           if ($found.Count -gt 0) { throw "model identifier(s) found in binary: $($found -join ', ')" }
           "clean: no model identifiers in $exe"
 
-      - name: Checksums
+      - name: Checksum
         shell: pwsh
         run: |
-          $exe = "llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe"
+          $exe = "artifacts/llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe"
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  $exe" | Out-File -Encoding ascii checksums.txt
-          Get-Content checksums.txt
+          "$hash  $(Split-Path $exe -Leaf)" | Out-File -Encoding ascii artifacts/checksums-win.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-artifacts
+          path: artifacts/*
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout agent source (private infra repo, deploy token)
+        uses: actions/checkout@v4
+        with:
+          repository: llmtune-io/llmtune-infra
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          path: infra
+          sparse-checkout: |
+            workers/win-agent
+
+      - name: Version from tag
+        id: ver
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          [ -n "$V" ] && [ "$V" != "heads/main" ] || V="0.0.0-dev-${GITHUB_RUN_NUMBER}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Install PowerShell
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq powershell 2>/dev/null || {
+            wget -q https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell_7.4.6-1.deb_amd64.deb
+            sudo dpkg -i powershell_7.4.6-1.deb_amd64.deb || sudo apt-get install -f -y
+          }
+          pwsh -NoProfile -Command '"pwsh ready: " + $PSVersionTable.PSVersion'
+
+      - name: Syntax-check agent on Linux (pwsh parser)
+        run: |
+          pwsh -NoProfile -Command '
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile("$GITHUB_WORKSPACE/infra/workers/win-agent/llmtune-worker-agent.ps1", [ref]$null, [ref]$errs) | Out-Null
+            if ($errs -and $errs.Count -gt 0) { $errs | ForEach-Object { Write-Error $_.Message }; exit 1 }
+            "agent script parses cleanly on pwsh"'
+      - name: Build Linux tarball
+        run: |
+          chmod +x infra/workers/win-agent/build-linux-agent.sh
+          infra/workers/win-agent/build-linux-agent.sh "${{ steps.ver.outputs.version }}"
+          mkdir -p artifacts
+          cp infra/workers/workers-linux-agent-dist/*.tar.gz artifacts/
+          cp infra/workers/workers-linux-agent-dist/*.sha256 artifacts/ 2>/dev/null || true
+
+      - name: Guard — no model identifiers in tarball
+        run: |
+          TARBALL="artifacts/llmtune-worker-agent-${{ steps.ver.outputs.version }}-linux-x64.tar.gz"
+          TMP=$(mktemp -d)
+          tar -xzf "$TARBALL" -C "$TMP"
+          TEXT=$(cat "$TMP"/*/llmtune-worker-agent "$TMP"/*/llmtune-worker-agent.ps1 | tr '[:upper:]' '[:lower:]')
+          for banned in devstral mistral llama qwen "vllm serve" model-weights; do
+            if grep -qi "$banned" <<< "$TEXT"; then echo "model identifier '$banned' found in agent"; exit 1; fi
+          done
+          echo "clean: no model identifiers in $TARBALL"
+
+      - name: Checksum
+        run: |
+          cd artifacts
+          sha256sum *.tar.gz > checksums-linux.txt
+          cat checksums-linux.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: artifacts/*
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Merge checksums
+        run: |
+          find dist -name "checksums-*.txt" -exec cat {} \; | sort > dist/checksums.txt
+          cat dist/checksums.txt
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            llmtune-worker-agent-${{ steps.ver.outputs.version }}-win-x64.exe
-            checksums.txt
+            dist/*/llmtune-worker-agent-*-win-x64.exe
+            dist/*/llmtune-worker-agent-*-linux-x64.tar.gz
+            dist/checksums.txt
           generate_release_notes: true
           body: |
-            LLMTune Worker Agent v${{ steps.ver.outputs.version }} (Windows x64)
+            LLMTune Worker Agent v${{ github.ref_name }} (Windows x64 + Linux x64)
 
             Infrastructure-only onboarding agent: NetBird join, hardware/GPU probe,
             chassis signature, registration + heartbeat.
 
-            **Models are platform-managed.** This binary contains no model names,
+            **Models are platform-managed.** These binaries contain no model names,
             paths, or configuration. Model assignment is controlled by platform
             administrators via the admin panel / model-assignment API.
 
-            Verify the download against `checksums.txt` (SHA-256).
+            - Windows: self-contained exe (PS2EXE); needs nvidia-smi on PATH for GPU stats.
+            - Linux: tar.gz with pwsh launcher; requires PowerShell (pwsh) on the target.
+
+            Verify downloads against `checksums.txt` (SHA-256).
