@@ -3,7 +3,7 @@ name: Release Worker Agent
 # Builds the LLMTune worker agent for Windows AND Linux from the PRIVATE infra
 # repo (checked out with a token, never committed here) and attaches both
 # artifacts + checksums to a GitHub Release.
-# The agent is infrastructure-only: NetBird join, hardware probe, chassis
+# The agent is infrastructure-only: mesh network registration, hardware probe, chassis
 # signature, registration, heartbeat. It carries NO model names, paths, or
 # configuration — model assignment is platform-managed via the admin panel /
 # model-assignment API and delivered through heartbeat responses.
@@ -161,8 +161,8 @@ jobs:
           body: |
             LLMTune Worker Agent v${{ github.ref_name }} (Windows x64 + Linux x64)
 
-            Infrastructure-only onboarding agent: NetBird join, hardware/GPU probe,
-            chassis signature, registration + heartbeat.
+            Infrastructure-only onboarding agent: mesh network registration, hardware/GPU
+            probe, chassis signature, registration + heartbeat.
 
             **Models are platform-managed.** These binaries contain no model names,
             paths, or configuration. Model assignment is controlled by platform
